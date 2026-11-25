@@ -1,0 +1,53 @@
+name: Push email notification
+description: Sends an email listing the commits of a push event.
+
+runs:
+  using: composite
+  steps:
+    - name: Build email body
+      id: build
+      shell: bash
+      env:
+        REPO: ${{ github.repository }}
+        BRANCH: ${{ github.ref_name }}
+        PUSHER: ${{ github.actor }}
+        COMPARE: ${{ github.event.compare }}
+      run: |
+        {
+          echo "A new push was made."
+          echo
+          echo "Repository: $REPO"
+          echo "Branch: $BRANCH"
+          echo "Pusher: $PUSHER"
+          echo
+          echo "Commits ($(jq '.commits | length' "$GITHUB_EVENT_PATH")):"
+          echo
+          echo
+          jq -r '[.commits[] |
+            "commit \(.id)\nAuthor: \(.author.name)\nDate:   \(.timestamp)\n\n" +
+            (.message | split("\n") | map("    " + .) | join("\n")) +
+            "\n\n\(.url)"] | join("\n\n\n")' "$GITHUB_EVENT_PATH"
+          echo
+          echo
+          echo "Compare:"
+          echo "$COMPARE"
+        } > push-body.txt
+
+        title=$(jq -r '.commits[0].message // ""' "$GITHUB_EVENT_PATH" | head -n 1 | tr -d '\r')
+        if [ -z "$title" ]; then
+          title="$PUSHER pushed to $BRANCH"
+        fi
+        echo "title=$title" >> "$GITHUB_OUTPUT"
+
+    - name: Send email
+      uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0  # v24
+      with:
+        server_address: ${{ env.SMTP_HOST }}
+        server_port: 587
+        require_tls: true
+        username: ${{ env.SMTP_USERNAME }}
+        password: ${{ env.SMTP_PASSWORD }}
+        subject: "[Firebird-checkins] [${{ github.repository }}] ${{ steps.build.outputs.title }}"
+        to: firebird-checkins@googlegroups.com
+        from: ${{ github.event.pusher.name }} <alice@firebirdsql.org>
+        body: file://push-body.txt
